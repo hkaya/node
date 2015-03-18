@@ -578,19 +578,26 @@ int uv_loop_configure(uv_loop_t* loop, uv_loop_option option, ...) {
 }
 
 
-static uv_loop_t default_loop_struct;
-static uv_loop_t* default_loop_ptr;
-
+static uv_key_t thread_ctx_key;
+static int thread_ctx_initiated = 0;
 
 uv_loop_t* uv_default_loop(void) {
-  if (default_loop_ptr != NULL)
-    return default_loop_ptr;
+  uv_loop_t* loop;
+  if (!thread_ctx_initiated) {
+    thread_ctx_initiated = 1;
+    uv_key_create(&thread_ctx_key);
+  }
+  loop = (uv_loop_t*)uv_key_get(&thread_ctx_key);
+  if (loop != NULL)
+    return loop;
 
-  if (uv_loop_init(&default_loop_struct))
+  loop = malloc(sizeof(uv_loop_t));
+  memset(loop, 0, sizeof(uv_loop_t));
+  if (uv_loop_init(loop))
     return NULL;
 
-  default_loop_ptr = &default_loop_struct;
-  return default_loop_ptr;
+  uv_key_set(&thread_ctx_key, loop);
+  return loop;
 }
 
 
@@ -613,6 +620,7 @@ uv_loop_t* uv_loop_new(void) {
 int uv_loop_close(uv_loop_t* loop) {
   QUEUE* q;
   uv_handle_t* h;
+  uv_loop_t* default_loop_ptr;
 
   if (!QUEUE_EMPTY(&(loop)->active_reqs))
     return UV_EBUSY;
@@ -628,8 +636,9 @@ int uv_loop_close(uv_loop_t* loop) {
 #ifndef NDEBUG
   memset(loop, -1, sizeof(*loop));
 #endif
+  default_loop_ptr = (uv_loop_t*)uv_key_get(&thread_ctx_key);
   if (loop == default_loop_ptr)
-    default_loop_ptr = NULL;
+    uv_key_set(&thread_ctx_key, NULL);
 
   return 0;
 }
@@ -639,6 +648,7 @@ void uv_loop_delete(uv_loop_t* loop) {
   uv_loop_t* default_loop;
   int err;
 
+  uv_loop_t* default_loop_ptr = (uv_loop_t*)uv_key_get(&thread_ctx_key);
   default_loop = default_loop_ptr;
 
   err = uv_loop_close(loop);
